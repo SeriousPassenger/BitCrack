@@ -597,6 +597,9 @@ static bool saveRanges(const std::string &file, const std::vector<RangeEntry> &r
     return true;
 }
 
+// Compute how many ranges exist in the given specification
+static uint64_t computeTotalRanges(const RangeSpec &spec);
+
 static void createRangesFile(const std::string &file)
 {
     RangeSpec spec;
