@@ -9,6 +9,7 @@
 #include "CmdParse.h"
 #include "Logger.h"
 #include "ConfigFile.h"
+#include <random>
 
 #include "DeviceManager.h"
 
@@ -283,7 +284,7 @@ static void printDeviceList(const std::vector<DeviceManager::DeviceInfo> &device
     for(int i = 0; i < devices.size(); i++) {
         printf("ID:     %d\n", devices[i].id);
         printf("Name:   %s\n", devices[i].name.c_str());
-        printf("Memory: %lldMB\n", devices[i].memory / ((uint64_t)1024 * 1024));
+        printf("Memory: %lluMB\n", (unsigned long long)(devices[i].memory / ((uint64_t)1024 * 1024)));
         printf("Compute units: %d\n", devices[i].computeUnits);
         printf("\n");
     }
