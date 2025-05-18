@@ -606,12 +606,43 @@ static void createRangesFile(const std::string &file)
     spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60ULL);
     spec.next = 0;
 
+    Logger::log(LogLevel::Debug, "Creating range descriptor start=" + spec.start.toString() +
+            " end=" + spec.end.toString() + " size=" + util::format(spec.size));
+
     if(!writeRangeSpec(file, spec)) {
         Logger::log(LogLevel::Error, "Unable to write '" + file + "'");
         return;
     }
 
     Logger::log(LogLevel::Info, "Range descriptor written to '" + file + "'");
+}
+
+// Divide a 256-bit integer by a 64-bit value and return the quotient as a
+// 64-bit value. The 256-bit value is not expected to exceed 2^192 for this
+// usage and the quotient must fit into 64-bits.
+static uint64_t divUint256ByUint64(secp256k1::uint256 value, uint64_t divisor)
+{
+    __uint128_t rem = 0;
+    secp256k1::uint256 quotient;
+
+    for(int i = 7; i >= 0; i--) {
+        __uint128_t cur = (rem << 32) | value.v[i];
+        quotient.v[i] = (uint32_t)(cur / divisor);
+        rem = cur % divisor;
+    }
+
+    return quotient.toUint64();
+}
+
+static uint64_t computeTotalRanges(const RangeSpec &spec)
+{
+    using secp256k1::uint256;
+
+    uint256 diff = spec.end - spec.start;
+    diff = diff + uint256(1);
+
+    uint256 numerator = diff + uint256(spec.size - 1);
+    return divUint256ByUint64(numerator, spec.size);
 }
 
 static int processRanges(const std::string &file)
@@ -622,16 +653,40 @@ static int processRanges(const std::string &file)
         return 1;
     }
 
-    while(true) {
+    Logger::log(LogLevel::Debug, "Range spec start=" + spec.start.toString() +
+            " end=" + spec.end.toString() + " size=" + util::format(spec.size));
+
+    _totalRanges = computeTotalRanges(spec);
+    _rangesRemaining = _totalRanges;
+    _rangeMode = true;
+
+    Logger::log(LogLevel::Debug, "Total ranges computed: " + util::format((int)_totalRanges));
+
+    std::vector<bool> done(_totalRanges, false);
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<uint64_t> dist(0, _totalRanges - 1);
+
+    size_t processed = 0;
+    while(processed < _totalRanges) {
+        uint64_t idx = dist(gen);
+        while(done[idx]) {
+            idx = dist(gen);
+        }
+        done[idx] = true;
+
         secp256k1::uint256 start;
         secp256k1::uint256 end;
+        getRange(spec, idx, start, end);
 
-        getRange(spec, spec.next, start, end);
+        _currentRangeIdx = idx;
+        _currentRangeEnd = end;
+        _rangesRemaining = _totalRanges - processed - 1;
 
-        if(start.cmp(spec.end) > 0) {
-            Logger::log(LogLevel::Info, "All ranges processed");
-            break;
-        }
+        Logger::log(LogLevel::Debug,
+            "Processing range " + util::format((int)(idx + 1)) + "/" +
+            util::format((int)_totalRanges) + " start=" + start.toString() +
+            " end=" + end.toString());
 
         _config.startKey = start;
         _config.nextKey = start;
@@ -641,17 +696,22 @@ static int processRanges(const std::string &file)
 
         int rc = run();
         if(rc != 0) {
+            _rangeMode = false;
             return rc;
         }
 
-        spec.next++;
+        processed++;
+        spec.next = processed;
 
         if(!writeRangeSpec(file, spec)) {
             Logger::log(LogLevel::Error, "Unable to update '" + file + "'");
+            _rangeMode = false;
             return 1;
         }
     }
 
+    _rangeMode = false;
+    Logger::log(LogLevel::Info, "All ranges processed");
     return 0;
 }
 
