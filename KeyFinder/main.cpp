@@ -66,6 +66,11 @@ void writeCheckpoint(secp256k1::uint256 nextKey);
 static uint64_t _lastUpdate = 0;
 static uint64_t _runningTime = 0;
 static uint64_t _startTime = 0;
+static bool _rangeMode = false;
+static size_t _currentRangeIdx = 0;
+static size_t _rangesRemaining = 0;
+static secp256k1::uint256 _currentRangeEnd = 0;
+static size_t _totalRanges = 0;
 
 /**
 * Callback to display the private key
@@ -134,12 +139,29 @@ void statusCallback(KeySearchStatus info)
     const char *formatStr = NULL;
 
     if(_config.follow) {
-        formatStr = "%s %s/%sMB | %s %s %s %s\n";
+        formatStr = "%s %s/%sMB | %s %s %s %s";
     } else {
         formatStr = "\r%s %s / %sMB | %s %s %s %s";
     }
 
-	printf(formatStr, devName.c_str(), usedMemStr.c_str(), totalMemStr.c_str(), targetStr.c_str(), speedStr.c_str(), totalStr.c_str(), timeStr.c_str());
+    printf(formatStr, devName.c_str(), usedMemStr.c_str(), totalMemStr.c_str(), targetStr.c_str(), speedStr.c_str(), totalStr.c_str(), timeStr.c_str());
+
+    if(_rangeMode) {
+        secp256k1::uint256 remaining = _currentRangeEnd - info.nextKey;
+        uint64_t rem = remaining.toUint64() + 1;
+        double etaSec = 0.0;
+        if(info.speed > 0.0) {
+            etaSec = (double)rem / (info.speed * 1000000.0);
+        }
+        std::string etaStr = util::formatSeconds((unsigned int)etaSec);
+        std::string rangeInfo = " | range " + util::format((int)(_currentRangeIdx + 1)) + "/" + util::format((int)_totalRanges);
+        rangeInfo += " remaining:" + util::format((int)_rangesRemaining) + " eta:" + etaStr;
+        printf("%s", rangeInfo.c_str());
+    }
+
+    if(_config.follow) {
+        printf("\n");
+    }
 
     if(_config.checkpointFile.length() > 0) {
         uint64_t t = util::getSystemTime();
@@ -215,6 +237,8 @@ void usage()
     printf("--stride N              Increment by N keys at a time\n");
     printf("--share M/N             Divide the keyspace into N equal shares, process the Mth share\n");
     printf("--continue FILE         Save/load progress from FILE\n");
+    printf("--create-ranges FILE    Create ranges covering the keyspace\n");
+    printf("--process-ranges FILE   Process ranges from FILE\n");
 }
 
 
@@ -459,6 +483,134 @@ bool parseShare(const std::string &s, uint32_t &idx, uint32_t &total)
     return true;
 }
 
+struct RangeEntry {
+    secp256k1::uint256 start;
+    secp256k1::uint256 end;
+    bool done = false;
+};
+
+static bool loadRanges(const std::string &file, std::vector<RangeEntry> &ranges)
+{
+    ranges.clear();
+    std::vector<std::string> lines;
+    if(!util::readLinesFromStream(file, lines)) {
+        return false;
+    }
+
+    for(size_t i = 0; i < lines.size(); i++) {
+        std::string line = util::trim(lines[i]);
+        if(line.length() == 0) continue;
+        size_t p1 = line.find(':');
+        if(p1 == std::string::npos) continue;
+        size_t p2 = line.find(':', p1 + 1);
+        std::string s1 = line.substr(0, p1);
+        std::string s2 = (p2 == std::string::npos) ? line.substr(p1 + 1) : line.substr(p1 + 1, p2 - p1 - 1);
+        std::string s3 = (p2 == std::string::npos) ? "0" : line.substr(p2 + 1);
+        RangeEntry r;
+        r.start = secp256k1::uint256(s1);
+        r.end = secp256k1::uint256(s2);
+        r.done = (s3 == "1");
+        ranges.push_back(r);
+    }
+
+    return true;
+}
+
+static bool saveRanges(const std::string &file, const std::vector<RangeEntry> &ranges)
+{
+    std::ofstream out(file.c_str(), std::ios::out);
+    if(!out.is_open()) {
+        return false;
+    }
+
+    for(size_t i = 0; i < ranges.size(); i++) {
+        out << ranges[i].start.toString() << ":" << ranges[i].end.toString() << ":" << (ranges[i].done ? "1" : "0") << std::endl;
+    }
+
+    out.close();
+    return true;
+}
+
+static void createRangesFile(const std::string &file)
+{
+    std::vector<RangeEntry> ranges;
+    secp256k1::uint256 rangeSize((uint64_t)300 * 1000000ULL * 60ULL * 60ULL);
+    secp256k1::uint256 cur = _config.startKey;
+
+    while(cur.cmp(_config.endKey) <= 0) {
+        secp256k1::uint256 end = cur + rangeSize - 1;
+        if(end.cmp(_config.endKey) > 0) {
+            end = _config.endKey;
+        }
+
+        RangeEntry r;
+        r.start = cur;
+        r.end = end;
+        r.done = false;
+        ranges.push_back(r);
+
+        if(end.cmp(_config.endKey) == 0) {
+            break;
+        }
+
+        cur = end + 1;
+    }
+
+    saveRanges(file, ranges);
+    Logger::log(LogLevel::Info, util::format((int)ranges.size()) + " ranges written to '" + file + "'");
+}
+
+static int processRanges(const std::string &file)
+{
+    std::vector<RangeEntry> ranges;
+    if(!loadRanges(file, ranges)) {
+        Logger::log(LogLevel::Error, "Unable to read '" + file + "'");
+        return 1;
+    }
+
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+
+    while(true) {
+        std::vector<size_t> remaining;
+        for(size_t i = 0; i < ranges.size(); i++) {
+            if(!ranges[i].done) remaining.push_back(i);
+        }
+
+        if(remaining.size() == 0) {
+            Logger::log(LogLevel::Info, "All ranges processed");
+            break;
+        }
+
+        std::uniform_int_distribution<size_t> dist(0, remaining.size() - 1);
+        size_t idx = remaining[dist(gen)];
+        RangeEntry &r = ranges[idx];
+
+        _rangeMode = true;
+        _currentRangeIdx = idx;
+        _rangesRemaining = remaining.size() - 1;
+        _totalRanges = ranges.size();
+        _currentRangeEnd = r.end;
+
+        _config.startKey = r.start;
+        _config.nextKey = r.start;
+        _config.endKey = r.end;
+        _config.totalkeys = 0;
+        _config.elapsed = 0;
+
+        int rc = run();
+        if(rc != 0) {
+            return rc;
+        }
+
+        r.done = true;
+        saveRanges(file, ranges);
+        _rangeMode = false;
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
 	bool optCompressed = false;
@@ -468,6 +620,10 @@ int main(int argc, char **argv)
     bool optThreads = false;
     bool optBlocks = false;
     bool optPoints = false;
+    bool optCreateRanges = false;
+    bool optProcessRanges = false;
+    std::string rangesCreateFile = "";
+    std::string rangesProcessFile = "";
 
     uint32_t shareIdx = 0;
     uint32_t numShares = 0;
@@ -517,6 +673,8 @@ int main(int argc, char **argv)
     parser.add("", "--continue", true);
     parser.add("", "--share", true);
     parser.add("", "--stride", true);
+    parser.add("", "--create-ranges", true);
+    parser.add("", "--process-ranges", true);
 
     try {
         parser.parse(argc, argv);
@@ -600,6 +758,12 @@ int main(int argc, char **argv)
                 if(_config.stride.cmp(0) == 0) {
                     throw std::string("argument is out of range");
                 }
+            } else if(optArg.equals("", "--create-ranges")) {
+                rangesCreateFile = optArg.arg;
+                optCreateRanges = true;
+            } else if(optArg.equals("", "--process-ranges")) {
+                rangesProcessFile = optArg.arg;
+                optProcessRanges = true;
             } else if(optArg.equals("-f", "--follow")) {
                 _config.follow = true;
             }
@@ -674,6 +838,15 @@ int main(int argc, char **argv)
 
     if(_config.checkpointFile.length() > 0) {
         readCheckpointFile();
+    }
+
+    if(optCreateRanges) {
+        createRangesFile(rangesCreateFile);
+        return 0;
+    }
+
+    if(optProcessRanges) {
+        return processRanges(rangesProcessFile);
     }
 
     return run();
