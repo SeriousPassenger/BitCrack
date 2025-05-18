@@ -553,6 +553,9 @@ static void getRange(const RangeSpec &spec, uint64_t idx, secp256k1::uint256 &st
 }
 
 
+// Compute how many ranges exist in the given specification
+static uint64_t computeTotalRanges(const RangeSpec &spec);
+
 static void createRangesFile(const std::string &file)
 {
     RangeSpec spec;
@@ -561,10 +564,13 @@ static void createRangesFile(const std::string &file)
     spec.end = _config.endKey;
     spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60ULL);
 
-    Logger::log(LogLevel::Debug, "Creating range descriptor start=" + spec.start.toString() +
+    Logger::log(LogLevel::Debug, "Creating ranges start=" + spec.start.toString() +
             " end=" + spec.end.toString() + " size=" + util::format(spec.size));
 
-    if(!writeRangeSpec(file, spec)) {
+    uint64_t total = computeTotalRanges(spec);
+
+    std::ofstream out(file.c_str(), std::ios::out);
+    if(!out.is_open()) {
         Logger::log(LogLevel::Error, "Unable to write '" + file + "'");
         return;
     }
@@ -673,7 +679,6 @@ static int processRanges(const std::string &file)
 
     std::random_device rd;
     std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint64_t> dist(0, _totalRanges - 1);
 
     while(done.size() < _totalRanges) {
         uint64_t idx = dist(gen);
