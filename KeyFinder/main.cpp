@@ -604,7 +604,6 @@ static void createRangesFile(const std::string &file)
     spec.start = _config.startKey;
     spec.end = _config.endKey;
     spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60ULL);
-    spec.next = 0;
 
     Logger::log(LogLevel::Debug, "Creating range descriptor start=" + spec.start.toString() +
             " end=" + spec.end.toString() + " size=" + util::format(spec.size));
@@ -614,7 +613,71 @@ static void createRangesFile(const std::string &file)
         return;
     }
 
-    Logger::log(LogLevel::Info, "Range descriptor written to '" + file + "'");
+    for(uint64_t i = 0; i < total; i++) {
+        secp256k1::uint256 start;
+        secp256k1::uint256 end;
+        getRange(spec, i, start, end);
+        out << start.toString() << ":" << end.toString() << ":0" << std::endl;
+    }
+
+    out.close();
+    Logger::log(LogLevel::Info, util::format((int)total) + " ranges written to '" + file + "'");
+}
+
+// Divide a 256-bit integer by a 64-bit value and return the quotient as a
+// 64-bit value. The 256-bit value is not expected to exceed 2^192 for this
+// usage and the quotient must fit into 64-bits.
+static uint64_t divUint256ByUint64(secp256k1::uint256 value, uint64_t divisor)
+{
+    __uint128_t rem = 0;
+    secp256k1::uint256 quotient;
+
+    for(int i = 7; i >= 0; i--) {
+        __uint128_t cur = (rem << 32) | value.v[i];
+        quotient.v[i] = (uint32_t)(cur / divisor);
+        rem = cur % divisor;
+    }
+
+    return quotient.toUint64();
+}
+
+static uint64_t computeTotalRanges(const RangeSpec &spec)
+{
+    using secp256k1::uint256;
+
+    uint256 diff = spec.end - spec.start;
+    diff = diff + uint256(1);
+
+    uint256 numerator = diff + uint256(spec.size - 1);
+    return divUint256ByUint64(numerator, spec.size);
+}
+
+// Divide a 256-bit integer by a 64-bit value and return the quotient as a
+// 64-bit value. The 256-bit value is not expected to exceed 2^192 for this
+// usage and the quotient must fit into 64-bits.
+static uint64_t divUint256ByUint64(secp256k1::uint256 value, uint64_t divisor)
+{
+    __uint128_t rem = 0;
+    secp256k1::uint256 quotient;
+
+    for(int i = 7; i >= 0; i--) {
+        __uint128_t cur = (rem << 32) | value.v[i];
+        quotient.v[i] = (uint32_t)(cur / divisor);
+        rem = cur % divisor;
+    }
+
+    return quotient.toUint64();
+}
+
+static uint64_t computeTotalRanges(const RangeSpec &spec)
+{
+    using secp256k1::uint256;
+
+    uint256 diff = spec.end - spec.start;
+    diff = diff + uint256(1);
+
+    uint256 numerator = diff + uint256(spec.size - 1);
+    return divUint256ByUint64(numerator, spec.size);
 }
 
 // Divide a 256-bit integer by a 64-bit value and return the quotient as a
@@ -647,8 +710,8 @@ static uint64_t computeTotalRanges(const RangeSpec &spec)
 
 static int processRanges(const std::string &file)
 {
-    RangeSpec spec;
-    if(!readRangeSpec(file, spec)) {
+    std::vector<RangeEntry> ranges;
+    if(!loadRanges(file, ranges)) {
         Logger::log(LogLevel::Error, "Unable to read '" + file + "'");
         return 1;
     }
@@ -688,9 +751,22 @@ static int processRanges(const std::string &file)
             util::format((int)_totalRanges) + " start=" + start.toString() +
             " end=" + end.toString());
 
-        _config.startKey = start;
-        _config.nextKey = start;
-        _config.endKey = end;
+        std::uniform_int_distribution<size_t> dist(0, remaining.size() - 1);
+        size_t idx = remaining[dist(gen)];
+        RangeEntry &r = ranges[idx];
+
+        _currentRangeIdx = idx;
+        _currentRangeEnd = r.end;
+        _rangesRemaining = remaining.size() - 1;
+
+        Logger::log(LogLevel::Debug,
+            "Processing range " + util::format((int)(idx + 1)) + "/" +
+            util::format((int)_totalRanges) + " start=" + r.start.toString() +
+            " end=" + r.end.toString());
+
+        _config.startKey = r.start;
+        _config.nextKey = r.start;
+        _config.endKey = r.end;
         _config.totalkeys = 0;
         _config.elapsed = 0;
 
@@ -703,7 +779,7 @@ static int processRanges(const std::string &file)
         processed++;
         spec.next = processed;
 
-        if(!writeRangeSpec(file, spec)) {
+        if(!saveRanges(file, ranges)) {
             Logger::log(LogLevel::Error, "Unable to update '" + file + "'");
             _rangeMode = false;
             return 1;
