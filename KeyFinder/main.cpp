@@ -534,9 +534,15 @@ static bool saveRanges(const std::string &file, const std::vector<RangeEntry> &r
 
 static void createRangesFile(const std::string &file)
 {
-    std::vector<RangeEntry> ranges;
+    std::ofstream out(file.c_str(), std::ios::out);
+    if(!out.is_open()) {
+        Logger::log(LogLevel::Error, "Unable to write '" + file + "'");
+        return;
+    }
+
     secp256k1::uint256 rangeSize(static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60ULL));
     secp256k1::uint256 cur = _config.startKey;
+    size_t count = 0;
 
     while(cur.cmp(_config.endKey) <= 0) {
         secp256k1::uint256 end = cur + rangeSize - 1;
@@ -544,11 +550,8 @@ static void createRangesFile(const std::string &file)
             end = _config.endKey;
         }
 
-        RangeEntry r;
-        r.start = cur;
-        r.end = end;
-        r.done = false;
-        ranges.push_back(r);
+        out << cur.toString() << ":" << end.toString() << ":0" << std::endl;
+        count++;
 
         if(end.cmp(_config.endKey) == 0) {
             break;
@@ -557,8 +560,8 @@ static void createRangesFile(const std::string &file)
         cur = end + 1;
     }
 
-    saveRanges(file, ranges);
-    Logger::log(LogLevel::Info, util::format((int)ranges.size()) + " ranges written to '" + file + "'");
+    out.close();
+    Logger::log(LogLevel::Info, util::format((int)count) + " ranges written to '" + file + "'");
 }
 
 static int processRanges(const std::string &file)
