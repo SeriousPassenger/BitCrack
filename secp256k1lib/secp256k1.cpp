@@ -613,7 +613,7 @@ uint256 secp256k1::multiplyModN(const uint256 &a, const uint256 &b)
 	return r;
 }
 
-std::string secp256k1::uint256::toString(int base)
+std::string secp256k1::uint256::toString(int base) const
 {
 	std::string s = "";
 
