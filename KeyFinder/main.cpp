@@ -562,7 +562,7 @@ static void createRangesFile(const std::string &file)
 
     spec.start = _config.startKey;
     spec.end = _config.endKey;
-    spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60ULL);
+    spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 5ULL);
 
     Logger::log(LogLevel::Debug, "Creating ranges start=" + spec.start.toString() +
             " end=" + spec.end.toString() + " size=" + util::format(spec.size));
