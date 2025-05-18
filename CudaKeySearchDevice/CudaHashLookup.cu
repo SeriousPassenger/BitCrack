@@ -15,13 +15,13 @@
 
 #define MAX_TARGETS_CONSTANT_MEM 16
 
-__constant__ unsigned int _TARGET_HASH[MAX_TARGETS_CONSTANT_MEM][5];
-__constant__ unsigned int _NUM_TARGET_HASHES[1];
-__constant__ unsigned int *_BLOOM_FILTER[1];
-__constant__ unsigned int _BLOOM_FILTER_MASK[1];
-__constant__ unsigned long long _BLOOM_FILTER_MASK64[1];
+__device__ unsigned int _TARGET_HASH[MAX_TARGETS_CONSTANT_MEM][5];
+__device__ unsigned int _NUM_TARGET_HASHES[1];
+__device__ unsigned int *_BLOOM_FILTER[1];
+__device__ unsigned int _BLOOM_FILTER_MASK[1];
+__device__ unsigned long long _BLOOM_FILTER_MASK64[1];
 
-__constant__ unsigned int _USE_BLOOM_FILTER[1];
+__device__ unsigned int _USE_BLOOM_FILTER[1];
 
 
 static unsigned int swp(unsigned int x)
@@ -45,7 +45,7 @@ static void undoRMD160FinalRound(const unsigned int hIn[5], unsigned int hOut[5]
 }
 
 /**
-Copies the target hashes to constant memory
+Copies the target hashes to device memory
 */
 cudaError_t CudaHashLookup::setTargetConstantMemory(const std::vector<struct hash160> &targets)
 {
@@ -70,7 +70,7 @@ cudaError_t CudaHashLookup::setTargetConstantMemory(const std::vector<struct has
 
 	unsigned int useBloomFilter = 0;
 
-	err = cudaMemcpyToSymbol(_USE_BLOOM_FILTER, &useBloomFilter, sizeof(bool));
+       err = cudaMemcpyToSymbol(_USE_BLOOM_FILTER, &useBloomFilter, sizeof(unsigned int));
 	if(err) {
 		return err;
 	}
@@ -178,7 +178,7 @@ cudaError_t CudaHashLookup::setTargetBloomFilter(const std::vector<struct hash16
 	}
 
 	// Copy device memory pointer to constant memory
-	err = cudaMemcpyToSymbol(_BLOOM_FILTER, &_bloomFilterPtr, sizeof(unsigned int *));
+       err = cudaMemcpyToSymbol(_BLOOM_FILTER, &_bloomFilterPtr, sizeof(unsigned int *));
 	if(err) {
 		cudaFree(_bloomFilterPtr);
 		_bloomFilterPtr = NULL;
@@ -188,7 +188,7 @@ cudaError_t CudaHashLookup::setTargetBloomFilter(const std::vector<struct hash16
 
 	// Copy device memory pointer to constant memory
 	if(bloomFilterBits <= 32) {
-		err = cudaMemcpyToSymbol(_BLOOM_FILTER_MASK, &bloomFilterMask, sizeof(unsigned int *));
+               err = cudaMemcpyToSymbol(_BLOOM_FILTER_MASK, &bloomFilterMask, sizeof(unsigned int));
 		if(err) {
 			cudaFree(_bloomFilterPtr);
 			_bloomFilterPtr = NULL;
@@ -196,7 +196,7 @@ cudaError_t CudaHashLookup::setTargetBloomFilter(const std::vector<struct hash16
 			return err;
 		}
 	} else {
-		err = cudaMemcpyToSymbol(_BLOOM_FILTER_MASK64, &bloomFilterMask, sizeof(unsigned long long *));
+               err = cudaMemcpyToSymbol(_BLOOM_FILTER_MASK64, &bloomFilterMask, sizeof(unsigned long long));
 		if(err) {
 			cudaFree(_bloomFilterPtr);
 			_bloomFilterPtr = NULL;
@@ -215,7 +215,7 @@ cudaError_t CudaHashLookup::setTargetBloomFilter(const std::vector<struct hash16
 }
 
 /**
-*Copies the target hashes to either constant memory, or the bloom filter depending
+*Copies the target hashes to either device memory, or the bloom filter depending
 on how many targets there are
 */
 cudaError_t CudaHashLookup::setTargets(const std::vector<struct hash160> &targets)
