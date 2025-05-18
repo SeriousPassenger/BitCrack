@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <fstream>
 #include <iostream>
+#include <vector>
+#include <unordered_set>
+#include <map>
 
 #include "KeyFinder.h"
 #include "AddressUtil.h"
@@ -484,12 +487,6 @@ bool parseShare(const std::string &s, uint32_t &idx, uint32_t &total)
     return true;
 }
 
-struct RangeEntry {
-    secp256k1::uint256 start;
-    secp256k1::uint256 end;
-    bool done = false;
-};
-
 struct RangeSpec {
     secp256k1::uint256 start;
     secp256k1::uint256 end;
@@ -555,47 +552,6 @@ static void getRange(const RangeSpec &spec, uint64_t idx, secp256k1::uint256 &st
     }
 }
 
-static bool loadRanges(const std::string &file, std::vector<RangeEntry> &ranges)
-{
-    ranges.clear();
-    std::vector<std::string> lines;
-    if(!util::readLinesFromStream(file, lines)) {
-        return false;
-    }
-
-    for(size_t i = 0; i < lines.size(); i++) {
-        std::string line = util::trim(lines[i]);
-        if(line.length() == 0) continue;
-        size_t p1 = line.find(':');
-        if(p1 == std::string::npos) continue;
-        size_t p2 = line.find(':', p1 + 1);
-        std::string s1 = line.substr(0, p1);
-        std::string s2 = (p2 == std::string::npos) ? line.substr(p1 + 1) : line.substr(p1 + 1, p2 - p1 - 1);
-        std::string s3 = (p2 == std::string::npos) ? "0" : line.substr(p2 + 1);
-        RangeEntry r;
-        r.start = secp256k1::uint256(s1);
-        r.end = secp256k1::uint256(s2);
-        r.done = (s3 == "1");
-        ranges.push_back(r);
-    }
-
-    return true;
-}
-
-static bool saveRanges(const std::string &file, const std::vector<RangeEntry> &ranges)
-{
-    std::ofstream out(file.c_str(), std::ios::out);
-    if(!out.is_open()) {
-        return false;
-    }
-
-    for(size_t i = 0; i < ranges.size(); i++) {
-        out << ranges[i].start.toString() << ":" << ranges[i].end.toString() << ":" << (ranges[i].done ? "1" : "0") << std::endl;
-    }
-
-    out.close();
-    return true;
-}
 
 // Compute how many ranges exist in the given specification
 static uint64_t computeTotalRanges(const RangeSpec &spec);
@@ -619,15 +575,7 @@ static void createRangesFile(const std::string &file)
         return;
     }
 
-    for(uint64_t i = 0; i < total; i++) {
-        secp256k1::uint256 start;
-        secp256k1::uint256 end;
-        getRange(spec, i, start, end);
-        out << start.toString() << ":" << end.toString() << ":0" << std::endl;
-    }
-
-    out.close();
-    Logger::log(LogLevel::Info, util::format((int)total) + " ranges written to '" + file + "'");
+    Logger::log(LogLevel::Info, "Range descriptor written to '" + file + "'");
 }
 
 // Divide a 256-bit integer by a 64-bit value and return the quotient as a
@@ -662,56 +610,98 @@ static uint64_t computeTotalRanges(const RangeSpec &spec)
     return divUint256ByUint64(numerator, spec.size);
 }
 
+static bool readRangeFile(const std::string &file, RangeSpec &spec,
+        std::unordered_set<uint64_t> &done)
+{
+    done.clear();
+    std::ifstream in(file.c_str());
+    if(!in.is_open()) {
+        return false;
+    }
+
+    std::map<std::string, std::string> entries;
+    std::string line;
+    bool specDone = false;
+    while(std::getline(in, line)) {
+        line = util::trim(line);
+        if(line.length() == 0) continue;
+        if(!specDone && line.find('=') != std::string::npos) {
+            size_t eq = line.find('=');
+            std::string key = util::toLower(util::trim(line.substr(0, eq)));
+            std::string val = util::trim(line.substr(eq + 1));
+            entries[key] = val;
+        } else {
+            specDone = true;
+            try {
+                uint64_t idx = util::parseUInt64(line);
+                done.insert(idx);
+            } catch(...) {
+            }
+        }
+    }
+
+    if(entries.find("start") == entries.end() ||
+       entries.find("end") == entries.end() ||
+       entries.find("size") == entries.end()) {
+        return false;
+    }
+
+    try {
+        spec.start = secp256k1::uint256(entries["start"]);
+        spec.end = secp256k1::uint256(entries["end"]);
+        spec.size = util::parseUInt64(entries["size"]);
+    } catch(...) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool appendProcessedIndex(const std::string &file, uint64_t idx)
+{
+    return util::appendToFile(file, util::format(idx));
+}
+
 static int processRanges(const std::string &file)
 {
-    std::vector<RangeEntry> ranges;
-    if(!loadRanges(file, ranges)) {
+    RangeSpec spec;
+    std::unordered_set<uint64_t> done;
+    if(!readRangeFile(file, spec, done)) {
         Logger::log(LogLevel::Error, "Unable to read '" + file + "'");
         return 1;
     }
 
-    secp256k1::uint256 globalStart = ranges[0].start;
-    secp256k1::uint256 globalEnd = ranges[0].end;
-    size_t processed = 0;
-    for(size_t i = 0; i < ranges.size(); i++) {
-        if(ranges[i].start.cmp(globalStart) < 0) globalStart = ranges[i].start;
-        if(ranges[i].end.cmp(globalEnd) > 0) globalEnd = ranges[i].end;
-        if(ranges[i].done) processed++;
-    }
-
-    _totalRanges = ranges.size();
-    _rangesRemaining = _totalRanges - processed;
+    _totalRanges = computeTotalRanges(spec);
+    _rangesRemaining = _totalRanges - done.size();
     _rangeMode = true;
 
-    Logger::log(LogLevel::Debug, "Loaded " + util::format((int)_totalRanges) + " ranges start=" +
-            globalStart.toString() + " end=" + globalEnd.toString());
+    Logger::log(LogLevel::Debug, "Total ranges " + util::format((int)_totalRanges));
 
     std::random_device rd;
     std::mt19937_64 gen(rd());
 
-    while(processed < _totalRanges) {
-        std::vector<size_t> remaining;
-        remaining.reserve(_totalRanges - processed);
-        for(size_t i = 0; i < ranges.size(); i++) {
-            if(!ranges[i].done) remaining.push_back(i);
+    while(done.size() < _totalRanges) {
+        uint64_t idx = dist(gen);
+        while(done.find(idx) != done.end()) {
+            idx = dist(gen);
         }
 
-        std::uniform_int_distribution<size_t> dist(0, remaining.size() - 1);
-        size_t idx = remaining[dist(gen)];
-        RangeEntry &r = ranges[idx];
+        secp256k1::uint256 start;
+        secp256k1::uint256 end;
+        getRange(spec, idx, start, end);
 
         _currentRangeIdx = idx;
-        _currentRangeEnd = r.end;
-        _rangesRemaining = remaining.size() - 1;
+        _currentRangeEnd = end;
+        _rangesRemaining = _totalRanges - done.size() - 1;
 
         Logger::log(LogLevel::Debug,
-            "Processing range " + util::format((int)(idx + 1)) + "/" +
-            util::format((int)_totalRanges) + " start=" + r.start.toString() +
-            " end=" + r.end.toString());
+            "Processing range " + util::format((int)(done.size() + 1)) + "/" +
+            util::format((int)_totalRanges) + " start=" + start.toString() +
+            " end=" + end.toString());
 
-        _config.startKey = r.start;
-        _config.nextKey = r.start;
-        _config.endKey = r.end;
+        _config.startKey = start;
+        _config.nextKey = start;
+        _config.endKey = end;
         _config.totalkeys = 0;
         _config.elapsed = 0;
 
@@ -721,14 +711,13 @@ static int processRanges(const std::string &file)
             return rc;
         }
 
-        r.done = true;
-        processed++;
-
-        if(!saveRanges(file, ranges)) {
+        done.insert(idx);
+        if(!appendProcessedIndex(file, idx)) {
             Logger::log(LogLevel::Error, "Unable to update '" + file + "'");
             _rangeMode = false;
             return 1;
         }
+        _rangesRemaining = _totalRanges - done.size();
     }
 
     _rangeMode = false;

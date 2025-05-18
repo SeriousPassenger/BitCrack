@@ -121,12 +121,12 @@ BitCrack can divide a keyspace into a set of ranges that are processed
 individually. This allows work to be resumed later or shared across machines.
 
 1. Generate a range file with `--create-ranges FILE`. The current keyspace is
-   split into fixed size ranges and written to `FILE`. Each line has the form
-   `START:END:0` where `0` indicates the range has not been processed yet.
+   split into fixed size ranges and the descriptor is written to `FILE`.
+   Individual ranges are generated on demand.
 2. Process the ranges using `--process-ranges FILE`. Ranges are selected at
-   random. After a range completes the line is updated to `START:END:1` so it
-   will not be processed again. Progress information shows how many ranges
-   remain.
+   random using the descriptor. After a range completes its index is appended
+   to the file so it will not be processed again. Progress information shows how
+   many ranges remain.
 
 The range file can be reused in multiple runs and only unfinished ranges will be
 processed.
