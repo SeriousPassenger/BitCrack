@@ -115,6 +115,22 @@ Use the `-b,` `-t` and `-p` options to specify the number of blocks, threads per
 xxBitCrack.exe -b 32 -t 256 -p 16 1FshYsUh3mqgsG29XpZ23eLjWV8Ur3VwH
 ```
 
+### Range Processing
+
+BitCrack can divide a keyspace into a set of ranges that are processed
+individually. This allows work to be resumed later or shared across machines.
+
+1. Generate a range file with `--create-ranges FILE`. The current keyspace is
+   split into fixed size ranges and written to `FILE`. Each line has the form
+   `START:END:0` where `0` indicates the range has not been processed yet.
+2. Process the ranges using `--process-ranges FILE`. Ranges are selected at
+   random. After a range completes the line is updated to `START:END:1` so it
+   will not be processed again. Progress information shows how many ranges
+   remain.
+
+The range file can be reused in multiple runs and only unfinished ranges will be
+processed.
+
 ### Choosing the right parameters for your device
 
 GPUs have many cores. Work for the cores is divided into blocks. Each block contains threads.
