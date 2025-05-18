@@ -535,7 +535,7 @@ static bool saveRanges(const std::string &file, const std::vector<RangeEntry> &r
 static void createRangesFile(const std::string &file)
 {
     std::vector<RangeEntry> ranges;
-    secp256k1::uint256 rangeSize((uint64_t)300 * 1000000ULL * 60ULL * 60ULL);
+    secp256k1::uint256 rangeSize(static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60ULL));
     secp256k1::uint256 cur = _config.startKey;
 
     while(cur.cmp(_config.endKey) <= 0) {
