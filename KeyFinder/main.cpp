@@ -655,6 +655,34 @@ static uint64_t computeTotalRanges(const RangeSpec &spec)
     return divUint256ByUint64(numerator, spec.size);
 }
 
+// Divide a 256-bit integer by a 64-bit value and return the quotient as a
+// 64-bit value. The 256-bit value is not expected to exceed 2^192 for this
+// usage and the quotient must fit into 64-bits.
+static uint64_t divUint256ByUint64(secp256k1::uint256 value, uint64_t divisor)
+{
+    __uint128_t rem = 0;
+    secp256k1::uint256 quotient;
+
+    for(int i = 7; i >= 0; i--) {
+        __uint128_t cur = (rem << 32) | value.v[i];
+        quotient.v[i] = (uint32_t)(cur / divisor);
+        rem = cur % divisor;
+    }
+
+    return quotient.toUint64();
+}
+
+static uint64_t computeTotalRanges(const RangeSpec &spec)
+{
+    using secp256k1::uint256;
+
+    uint256 diff = spec.end - spec.start;
+    diff = diff + uint256(1);
+
+    uint256 numerator = diff + uint256(spec.size - 1);
+    return divUint256ByUint64(numerator, spec.size);
+}
+
 static int processRanges(const std::string &file)
 {
     std::vector<RangeEntry> ranges;
