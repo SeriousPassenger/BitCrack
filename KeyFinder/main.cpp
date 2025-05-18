@@ -569,12 +569,13 @@ static void createRangesFile(const std::string &file)
 
     uint64_t total = computeTotalRanges(spec);
 
-    std::ofstream out(file.c_str(), std::ios::out);
-    if(!out.is_open()) {
+    spec.next = 0;
+    if(!writeRangeSpec(file, spec)) {
         Logger::log(LogLevel::Error, "Unable to write '" + file + "'");
         return;
     }
 
+    Logger::log(LogLevel::Debug, "Total ranges " + util::format((int)total));
     Logger::log(LogLevel::Info, "Range descriptor written to '" + file + "'");
 }
 
