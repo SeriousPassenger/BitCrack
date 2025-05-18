@@ -490,6 +490,71 @@ struct RangeEntry {
     bool done = false;
 };
 
+struct RangeSpec {
+    secp256k1::uint256 start;
+    secp256k1::uint256 end;
+    uint64_t size = 0;
+    uint64_t next = 0;
+};
+
+static bool readRangeSpec(const std::string &file, RangeSpec &spec)
+{
+    ConfigFileReader reader(file);
+
+    if(!reader.exists()) {
+        return false;
+    }
+
+    auto entries = reader.read();
+
+    if(entries.find("start") == entries.end() ||
+       entries.find("end") == entries.end() ||
+       entries.find("size") == entries.end() ||
+       entries.find("next") == entries.end()) {
+        return false;
+    }
+
+    try {
+        spec.start = secp256k1::uint256(entries["start"].value);
+        spec.end = secp256k1::uint256(entries["end"].value);
+        spec.size = util::parseUInt64(entries["size"].value);
+        spec.next = util::parseUInt64(entries["next"].value);
+    } catch(...) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool writeRangeSpec(const std::string &file, const RangeSpec &spec)
+{
+    std::ofstream out(file.c_str(), std::ios::out);
+
+    if(!out.is_open()) {
+        return false;
+    }
+
+    out << "start=" << spec.start.toString() << std::endl;
+    out << "end=" << spec.end.toString() << std::endl;
+    out << "size=" << util::format(spec.size) << std::endl;
+    out << "next=" << util::format(spec.next) << std::endl;
+    out.close();
+
+    return true;
+}
+
+static void getRange(const RangeSpec &spec, uint64_t idx, secp256k1::uint256 &start, secp256k1::uint256 &end)
+{
+    secp256k1::uint256 offset = secp256k1::uint256(spec.size) * secp256k1::uint256(idx);
+
+    start = spec.start + offset;
+    end = start + secp256k1::uint256(spec.size) - 1;
+
+    if(end.cmp(spec.end) > 0) {
+        end = spec.end;
+    }
+}
+
 static bool loadRanges(const std::string &file, std::vector<RangeEntry> &ranges)
 {
     ranges.clear();
@@ -534,68 +599,43 @@ static bool saveRanges(const std::string &file, const std::vector<RangeEntry> &r
 
 static void createRangesFile(const std::string &file)
 {
-    std::vector<RangeEntry> ranges;
-    secp256k1::uint256 rangeSize(static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60ULL));
-    secp256k1::uint256 cur = _config.startKey;
+    RangeSpec spec;
 
-    while(cur.cmp(_config.endKey) <= 0) {
-        secp256k1::uint256 end = cur + rangeSize - 1;
-        if(end.cmp(_config.endKey) > 0) {
-            end = _config.endKey;
-        }
+    spec.start = _config.startKey;
+    spec.end = _config.endKey;
+    spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60ULL);
+    spec.next = 0;
 
-        RangeEntry r;
-        r.start = cur;
-        r.end = end;
-        r.done = false;
-        ranges.push_back(r);
-
-        if(end.cmp(_config.endKey) == 0) {
-            break;
-        }
-
-        cur = end + 1;
+    if(!writeRangeSpec(file, spec)) {
+        Logger::log(LogLevel::Error, "Unable to write '" + file + "'");
+        return;
     }
 
-    saveRanges(file, ranges);
-    Logger::log(LogLevel::Info, util::format((int)ranges.size()) + " ranges written to '" + file + "'");
+    Logger::log(LogLevel::Info, "Range descriptor written to '" + file + "'");
 }
 
 static int processRanges(const std::string &file)
 {
-    std::vector<RangeEntry> ranges;
-    if(!loadRanges(file, ranges)) {
+    RangeSpec spec;
+    if(!readRangeSpec(file, spec)) {
         Logger::log(LogLevel::Error, "Unable to read '" + file + "'");
         return 1;
     }
 
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-
     while(true) {
-        std::vector<size_t> remaining;
-        for(size_t i = 0; i < ranges.size(); i++) {
-            if(!ranges[i].done) remaining.push_back(i);
-        }
+        secp256k1::uint256 start;
+        secp256k1::uint256 end;
 
-        if(remaining.size() == 0) {
+        getRange(spec, spec.next, start, end);
+
+        if(start.cmp(spec.end) > 0) {
             Logger::log(LogLevel::Info, "All ranges processed");
             break;
         }
 
-        std::uniform_int_distribution<size_t> dist(0, remaining.size() - 1);
-        size_t idx = remaining[dist(gen)];
-        RangeEntry &r = ranges[idx];
-
-        _rangeMode = true;
-        _currentRangeIdx = idx;
-        _rangesRemaining = remaining.size() - 1;
-        _totalRanges = ranges.size();
-        _currentRangeEnd = r.end;
-
-        _config.startKey = r.start;
-        _config.nextKey = r.start;
-        _config.endKey = r.end;
+        _config.startKey = start;
+        _config.nextKey = start;
+        _config.endKey = end;
         _config.totalkeys = 0;
         _config.elapsed = 0;
 
@@ -604,9 +644,12 @@ static int processRanges(const std::string &file)
             return rc;
         }
 
-        r.done = true;
-        saveRanges(file, ranges);
-        _rangeMode = false;
+        spec.next++;
+
+        if(!writeRangeSpec(file, spec)) {
+            Logger::log(LogLevel::Error, "Unable to update '" + file + "'");
+            return 1;
+        }
     }
 
     return 0;
