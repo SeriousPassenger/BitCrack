@@ -679,6 +679,7 @@ static int processRanges(const std::string &file)
 
     std::random_device rd;
     std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<uint64_t> dist(0, _totalRanges - 1);
 
     while(done.size() < _totalRanges) {
         uint64_t idx = dist(gen);
