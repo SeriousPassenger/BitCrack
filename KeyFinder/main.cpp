@@ -552,7 +552,6 @@ struct RangeSpec {
     secp256k1::uint256 start;
     secp256k1::uint256 end;
     uint64_t size = 0;
-    uint64_t next = 0;
     secp256k1::uint256 stride = 1;
     unsigned int threads = 0;
     unsigned int blocks = 0;
@@ -588,8 +587,7 @@ static bool readRangeSpec(const std::string &file, RangeSpec &spec)
 
     if(entries.find("start") == entries.end() ||
        entries.find("end") == entries.end() ||
-       entries.find("size") == entries.end() ||
-       entries.find("next") == entries.end()) {
+       entries.find("size") == entries.end()) {
         return false;
     }
 
@@ -597,7 +595,6 @@ static bool readRangeSpec(const std::string &file, RangeSpec &spec)
         spec.start = secp256k1::uint256(entries["start"]);
         spec.end = secp256k1::uint256(entries["end"]);
         spec.size = util::parseUInt64(entries["size"]);
-        spec.next = util::parseUInt64(entries["next"]);
         if(entries.find("stride") != entries.end()) {
             spec.stride = secp256k1::uint256(entries["stride"]);
         }
@@ -634,7 +631,6 @@ static bool writeRangeSpec(const std::string &file, const RangeSpec &spec)
     out << "start=" << spec.start.toString() << std::endl;
     out << "end=" << spec.end.toString() << std::endl;
     out << "size=" << util::format(spec.size) << std::endl;
-    out << "next=" << util::format(spec.next) << std::endl;
     out << "stride=" << spec.stride.toString() << std::endl;
     out << "threads=" << util::format(spec.threads) << std::endl;
     out << "blocks=" << util::format(spec.blocks) << std::endl;
@@ -718,7 +714,6 @@ static void createRangesFile(const std::string &file, const std::string &sizeOpt
         return;
     }
 
-    spec.next = 0;
     if(!writeRangeSpec(file, spec)) {
         Logger::log(LogLevel::Error, "Unable to write '" + file + "'");
         return;
@@ -822,9 +817,6 @@ static bool readRangeFile(const std::string &file, RangeSpec &spec,
         spec.start = secp256k1::uint256(entries["start"]);
         spec.end = secp256k1::uint256(entries["end"]);
         spec.size = util::parseUInt64(entries["size"]);
-        if(entries.find("next") != entries.end()) {
-            spec.next = util::parseUInt64(entries["next"]);
-        }
         if(entries.find("stride") != entries.end()) {
             spec.stride = secp256k1::uint256(entries["stride"]);
         }
