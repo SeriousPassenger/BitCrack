@@ -4,11 +4,13 @@
 #include<vector>
 #include<set>
 #include<algorithm>
+#include<stdexcept>
 
 #include"util.h"
 
 #ifdef _WIN32
 #include<windows.h>
+#include<bcrypt.h>
 #else
 #include<unistd.h>
 #include<sys/stat.h>
@@ -313,5 +315,34 @@ namespace util {
         bar.append(width - filled, '-');
         bar += "]";
         return bar;
+    }
+
+    uint64_t randomUint64()
+    {
+#ifdef _WIN32
+        unsigned __int64 val = 0;
+        BCRYPT_ALG_HANDLE h;
+        if(BCryptOpenAlgorithmProvider(&h, BCRYPT_RNG_ALGORITHM, NULL, 0)) {
+            throw std::runtime_error("BCryptOpenAlgorithmProvider failed");
+        }
+        if(BCryptGenRandom(h, reinterpret_cast<PUCHAR>(&val), sizeof(val), 0)) {
+            BCryptCloseAlgorithmProvider(h, 0);
+            throw std::runtime_error("BCryptGenRandom failed");
+        }
+        BCryptCloseAlgorithmProvider(h, 0);
+        return static_cast<uint64_t>(val);
+#else
+        uint64_t val = 0;
+        FILE *fp = fopen("/dev/urandom", "rb");
+        if(fp == NULL) {
+            throw std::runtime_error("Cannot open /dev/urandom");
+        }
+        if(fread(&val, 1, sizeof(val), fp) != sizeof(val)) {
+            fclose(fp);
+            throw std::runtime_error("Not enough entropy in /dev/urandom");
+        }
+        fclose(fp);
+        return val;
+#endif
     }
 }
