@@ -57,7 +57,7 @@ namespace util {
 	{
 		char buf[32] = "";
 
-		sprintf(buf, "%lld", x);
+                sprintf(buf, "%llu", (unsigned long long)x);
 
 		std::string s(buf);
 
@@ -106,14 +106,14 @@ namespace util {
 		}
 
 		if(isHex) {
-			if(sscanf(s.c_str(), "%llx", &val) != 1) {
-				throw std::string("Expected an integer");
-			}
-		} else {
-			if(sscanf(s.c_str(), "%lld", &val) != 1) {
-				throw std::string("Expected an integer");
-			}
-		}
+                        if(sscanf(s.c_str(), "%llx", (unsigned long long*)&val) != 1) {
+                                throw std::string("Expected an integer");
+                        }
+                } else {
+                        if(sscanf(s.c_str(), "%llu", (unsigned long long*)&val) != 1) {
+                                throw std::string("Expected an integer");
+                        }
+                }
 
 		return val;
 	}
@@ -239,7 +239,7 @@ namespace util {
 	{
 		char buf[100] = { 0 };
 
-		sprintf(buf, "%lld", (uint64_t)value);
+                sprintf(buf, "%llu", (unsigned long long)value);
 
 		return std::string(buf);
 	}

@@ -14,6 +14,7 @@
 #include "ConfigFile.h"
 #include <random>
 #include <cmath>
+#include <stdexcept>
 
 #include "DeviceManager.h"
 
@@ -673,7 +674,13 @@ static void createRangesFile(const std::string &file, const std::string &sizeOpt
     Logger::log(LogLevel::Debug, "Creating ranges start=" + spec.start.toString() +
             " end=" + spec.end.toString() + " size=" + util::format(spec.size));
 
-    uint64_t total = computeTotalRanges(spec);
+    uint64_t total = 0;
+    try {
+        total = computeTotalRanges(spec);
+    } catch(const std::overflow_error &e) {
+        Logger::log(LogLevel::Error, "Range count exceeds supported limit");
+        return;
+    }
 
     spec.next = 0;
     if(!writeRangeSpec(file, spec)) {
@@ -692,7 +699,7 @@ static void createRangesFile(const std::string &file, const std::string &sizeOpt
 // Divide a 256-bit integer by a 64-bit value and return the quotient as a
 // 64-bit value. The 256-bit value is not expected to exceed 2^192 for this
 // usage and the quotient must fit into 64-bits.
-static uint64_t divUint256ByUint64(secp256k1::uint256 value, uint64_t divisor)
+static secp256k1::uint256 divUint256ByUint64Full(secp256k1::uint256 value, uint64_t divisor)
 {
     __uint128_t rem = 0;
     secp256k1::uint256 quotient;
@@ -703,7 +710,12 @@ static uint64_t divUint256ByUint64(secp256k1::uint256 value, uint64_t divisor)
         rem = cur % divisor;
     }
 
-    return quotient.toUint64();
+    return quotient;
+}
+
+static uint64_t divUint256ByUint64(secp256k1::uint256 value, uint64_t divisor)
+{
+    return divUint256ByUint64Full(value, divisor).toUint64();
 }
 
 static uint64_t computeTotalRanges(const RangeSpec &spec)
@@ -714,7 +726,20 @@ static uint64_t computeTotalRanges(const RangeSpec &spec)
     diff = diff + uint256(1);
 
     uint256 numerator = diff + uint256(spec.size - 1);
-    return divUint256ByUint64(numerator, spec.size);
+
+    uint256 quotient = divUint256ByUint64Full(numerator, spec.size);
+
+    for(int i = 7; i >= 2; i--) {
+        if(quotient.v[i] != 0) {
+            throw std::overflow_error("range count exceeds 64 bits");
+        }
+    }
+
+    if(quotient.v[1] != 0) {
+        throw std::overflow_error("range count exceeds 64 bits");
+    }
+
+    return quotient.toUint64();
 }
 
 static bool readRangeFile(const std::string &file, RangeSpec &spec,
@@ -793,7 +818,12 @@ static int processRanges(const std::string &file)
     _config.targets = spec.addresses;
     _config.targetsFile.clear();
 
-    _totalRanges = computeTotalRanges(spec);
+    try {
+        _totalRanges = computeTotalRanges(spec);
+    } catch(const std::overflow_error &e) {
+        Logger::log(LogLevel::Error, "Range count exceeds supported limit");
+        return 1;
+    }
     _rangesRemaining = _totalRanges - done.size();
     _rangeMode = true;
 
