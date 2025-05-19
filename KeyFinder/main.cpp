@@ -13,6 +13,7 @@
 #include "Logger.h"
 #include "ConfigFile.h"
 #include <random>
+#include <cmath>
 
 #include "DeviceManager.h"
 
@@ -151,6 +152,21 @@ void statusCallback(KeySearchStatus info)
     printf(formatStr, devName.c_str(), usedMemStr.c_str(), totalMemStr.c_str(), targetStr.c_str(), speedStr.c_str(), totalStr.c_str(), timeStr.c_str());
 
     if(_rangeMode) {
+        secp256k1::uint256 rangeSize256 = _currentRangeEnd - _config.startKey + secp256k1::uint256(1);
+        uint64_t rangeSize = rangeSize256.toUint64();
+
+        secp256k1::uint256 done256 = info.nextKey - _config.startKey;
+        double pctRange = 0.0;
+        if(rangeSize > 0) {
+            pctRange = (double)done256.toUint64() / (double)rangeSize;
+        }
+
+        size_t processedRanges = _totalRanges - _rangesRemaining;
+        double pctTotal = 0.0;
+        if(_totalRanges > 0) {
+            pctTotal = (double)processedRanges / (double)_totalRanges;
+        }
+
         secp256k1::uint256 remaining = _currentRangeEnd - info.nextKey;
         uint64_t rem = remaining.toUint64() + 1;
         double etaSec = 0.0;
@@ -158,9 +174,20 @@ void statusCallback(KeySearchStatus info)
             etaSec = (double)rem / (info.speed * 1000000.0);
         }
         std::string etaStr = util::formatSeconds((unsigned int)etaSec);
-        std::string rangeInfo = " | range " + util::format((uint64_t)(_currentRangeIdx + 1)) + "/" +
-            util::format((uint64_t)_totalRanges);
-        rangeInfo += " remaining:" + util::format((uint64_t)_rangesRemaining) + " eta:" + etaStr;
+
+        int exp = 0;
+        if(rangeSize > 0) {
+            exp = static_cast<int>(std::log2((double)rangeSize));
+        }
+
+        std::string rangeBar = util::progressBar(pctRange, 10);
+        std::string totalBar = util::progressBar(pctTotal, 10);
+
+        std::string rangeInfo = " | " + rangeBar + " " + totalBar + " " +
+            util::format((uint64_t)processedRanges) + "/" +
+            util::format((uint64_t)_totalRanges) +
+            " size 2^" + util::format(exp) + " eta:" + etaStr;
+
         printf("%s", rangeInfo.c_str());
     }
 
@@ -244,6 +271,7 @@ void usage()
     printf("--continue FILE         Save/load progress from FILE\n");
     printf("--create-ranges FILE    Create ranges covering the keyspace\n");
     printf("--process-ranges FILE   Process ranges from FILE\n");
+    printf("                        Shows progress with range bars\n");
 }
 
 

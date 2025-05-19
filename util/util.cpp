@@ -295,4 +295,23 @@ namespace util {
 
         return s.substr(left, right - left + 1);
     }
+
+    std::string progressBar(double pct, int width)
+    {
+        if(width <= 0) {
+            return std::string();
+        }
+
+        if(pct < 0.0) pct = 0.0;
+        if(pct > 1.0) pct = 1.0;
+
+        int filled = static_cast<int>(pct * width + 0.5);
+        if(filled > width) filled = width;
+
+        std::string bar = "[";
+        bar.append(filled, '#');
+        bar.append(width - filled, '-');
+        bar += "]";
+        return bar;
+    }
 }
