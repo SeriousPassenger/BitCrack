@@ -9,6 +9,14 @@
 - Ranges are randomized and already processed ranges aren't processed the next time.
 - Simple progressbar
 
+### Building for CUDA
+
+First make sure you pass the correct <code>COMPUTE_CAP</code> in the makefile and save.
+
+Then:
+
+<pre>bash BUILD_CUDA.sh</pre>
+
 ### Example usage
 
 #### Creating range descriptor file
