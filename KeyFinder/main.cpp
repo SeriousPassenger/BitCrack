@@ -12,7 +12,6 @@
 #include "CmdParse.h"
 #include "Logger.h"
 #include "ConfigFile.h"
-#include <random>
 #include <cmath>
 #include <stdexcept>
 
@@ -891,14 +890,12 @@ static int processRanges(const std::string &file)
 
     Logger::log(LogLevel::Debug, "Total ranges " + util::format((uint64_t)_totalRanges));
 
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint64_t> dist(0, _totalRanges - 1);
+    // Use fresh entropy from /dev/urandom (or system RNG) for each range
 
     while(done.size() < _totalRanges) {
-        uint64_t idx = dist(gen);
+        uint64_t idx = util::randomUint64() % _totalRanges;
         while(done.find(idx) != done.end()) {
-            idx = dist(gen);
+            idx = util::randomUint64() % _totalRanges;
         }
 
         secp256k1::uint256 start;
