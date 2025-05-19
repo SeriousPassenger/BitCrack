@@ -38,6 +38,8 @@ std::string format(int value);
 void removeNewline(std::string &s);
 unsigned int endian(unsigned int x);
 
+std::string progressBar(double pct, int width);
+
 std::string toLower(const std::string &s);
 std::string trim(const std::string &s, char c=' ');
 
