@@ -493,17 +493,32 @@ struct RangeSpec {
     secp256k1::uint256 end;
     uint64_t size = 0;
     uint64_t next = 0;
+    std::vector<std::string> addresses;
 };
 
 static bool readRangeSpec(const std::string &file, RangeSpec &spec)
 {
-    ConfigFileReader reader(file);
-
-    if(!reader.exists()) {
+    std::ifstream in(file.c_str());
+    if(!in.is_open()) {
         return false;
     }
 
-    auto entries = reader.read();
+    std::map<std::string, std::string> entries;
+    std::string line;
+    while(std::getline(in, line)) {
+        line = util::trim(line);
+        if(line.length() == 0) continue;
+        if(line.find('=') == std::string::npos) continue;
+
+        size_t eq = line.find('=');
+        std::string key = util::toLower(util::trim(line.substr(0, eq)));
+        std::string val = util::trim(line.substr(eq + 1));
+        if(key == "addr") {
+            spec.addresses.push_back(val);
+        } else {
+            entries[key] = val;
+        }
+    }
 
     if(entries.find("start") == entries.end() ||
        entries.find("end") == entries.end() ||
@@ -513,10 +528,10 @@ static bool readRangeSpec(const std::string &file, RangeSpec &spec)
     }
 
     try {
-        spec.start = secp256k1::uint256(entries["start"].value);
-        spec.end = secp256k1::uint256(entries["end"].value);
-        spec.size = util::parseUInt64(entries["size"].value);
-        spec.next = util::parseUInt64(entries["next"].value);
+        spec.start = secp256k1::uint256(entries["start"]);
+        spec.end = secp256k1::uint256(entries["end"]);
+        spec.size = util::parseUInt64(entries["size"]);
+        spec.next = util::parseUInt64(entries["next"]);
     } catch(...) {
         return false;
     }
@@ -536,6 +551,10 @@ static bool writeRangeSpec(const std::string &file, const RangeSpec &spec)
     out << "end=" << spec.end.toString() << std::endl;
     out << "size=" << util::format(spec.size) << std::endl;
     out << "next=" << util::format(spec.next) << std::endl;
+
+    for(const std::string &addr : spec.addresses) {
+        out << "addr=" << addr << std::endl;
+    }
     out.close();
 
     return true;
@@ -564,6 +583,26 @@ static void createRangesFile(const std::string &file)
     spec.start = _config.startKey;
     spec.end = _config.endKey;
     spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60 * 12ULL);
+
+    if(!_config.targetsFile.empty()) {
+        std::vector<std::string> lines;
+        if(!util::readLinesFromStream(_config.targetsFile, lines)) {
+            Logger::log(LogLevel::Error, "Unable to open '" + _config.targetsFile + "'");
+            return;
+        }
+        for(const std::string &l : lines) {
+            std::string addr = util::trim(l);
+            if(addr.length() > 0) {
+                if(!Address::verifyAddress(addr)) {
+                    Logger::log(LogLevel::Error, "Invalid address '" + addr + "'");
+                    return;
+                }
+                spec.addresses.push_back(addr);
+            }
+        }
+    } else {
+        spec.addresses = _config.targets;
+    }
 
     Logger::log(LogLevel::Debug, "Creating ranges start=" + spec.start.toString() +
             " end=" + spec.end.toString() + " size=" + util::format(spec.size));
@@ -631,7 +670,11 @@ static bool readRangeFile(const std::string &file, RangeSpec &spec,
             size_t eq = line.find('=');
             std::string key = util::toLower(util::trim(line.substr(0, eq)));
             std::string val = util::trim(line.substr(eq + 1));
-            entries[key] = val;
+            if(key == "addr") {
+                spec.addresses.push_back(val);
+            } else {
+                entries[key] = val;
+            }
         } else {
             specDone = true;
             try {
@@ -652,6 +695,9 @@ static bool readRangeFile(const std::string &file, RangeSpec &spec,
         spec.start = secp256k1::uint256(entries["start"]);
         spec.end = secp256k1::uint256(entries["end"]);
         spec.size = util::parseUInt64(entries["size"]);
+        if(entries.find("next") != entries.end()) {
+            spec.next = util::parseUInt64(entries["next"]);
+        }
     } catch(...) {
         return false;
     }
@@ -672,6 +718,14 @@ static int processRanges(const std::string &file)
         Logger::log(LogLevel::Error, "Unable to read '" + file + "'");
         return 1;
     }
+
+    if(spec.addresses.size() == 0) {
+        Logger::log(LogLevel::Error, "Range file does not contain any addresses");
+        return 1;
+    }
+
+    _config.targets = spec.addresses;
+    _config.targetsFile.clear();
 
     _totalRanges = computeTotalRanges(spec);
     _rangesRemaining = _totalRanges - done.size();
