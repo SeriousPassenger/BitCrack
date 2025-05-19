@@ -22,7 +22,7 @@ Then:
 #### Creating range descriptor file
 
 <pre>
-  ./cuBitCrack --create-ranges myranges.txt -i in.txt --keyspace 0x0:0xFFFFFFFFFFFFFFFF --range-size 0xFFFFFFFFF
+  ./cuBitCrack --create-ranges myranges.txt -i in.txt --keyspace 0x1:0xFFFFFFFFFFFFFFFF --range-size 0xFFFFFFFFF
 </pre>
 
 #### Continuing from range descriptor file
