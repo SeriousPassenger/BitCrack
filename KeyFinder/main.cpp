@@ -553,6 +553,12 @@ struct RangeSpec {
     secp256k1::uint256 end;
     uint64_t size = 0;
     uint64_t next = 0;
+    secp256k1::uint256 stride = 1;
+    unsigned int threads = 0;
+    unsigned int blocks = 0;
+    unsigned int points = 0;
+    int device = -1;
+    int compression = PointCompressionType::COMPRESSED;
     std::vector<std::string> addresses;
 };
 
@@ -592,6 +598,24 @@ static bool readRangeSpec(const std::string &file, RangeSpec &spec)
         spec.end = secp256k1::uint256(entries["end"]);
         spec.size = util::parseUInt64(entries["size"]);
         spec.next = util::parseUInt64(entries["next"]);
+        if(entries.find("stride") != entries.end()) {
+            spec.stride = secp256k1::uint256(entries["stride"]);
+        }
+        if(entries.find("threads") != entries.end()) {
+            spec.threads = util::parseUInt32(entries["threads"]);
+        }
+        if(entries.find("blocks") != entries.end()) {
+            spec.blocks = util::parseUInt32(entries["blocks"]);
+        }
+        if(entries.find("points") != entries.end()) {
+            spec.points = util::parseUInt32(entries["points"]);
+        }
+        if(entries.find("device") != entries.end()) {
+            spec.device = util::parseUInt32(entries["device"]);
+        }
+        if(entries.find("compression") != entries.end()) {
+            spec.compression = parseCompressionString(entries["compression"]);
+        }
     } catch(...) {
         return false;
     }
@@ -611,6 +635,12 @@ static bool writeRangeSpec(const std::string &file, const RangeSpec &spec)
     out << "end=" << spec.end.toString() << std::endl;
     out << "size=" << util::format(spec.size) << std::endl;
     out << "next=" << util::format(spec.next) << std::endl;
+    out << "stride=" << spec.stride.toString() << std::endl;
+    out << "threads=" << util::format(spec.threads) << std::endl;
+    out << "blocks=" << util::format(spec.blocks) << std::endl;
+    out << "points=" << util::format(spec.points) << std::endl;
+    out << "device=" << util::format(spec.device) << std::endl;
+    out << "compression=" << getCompressionString(spec.compression) << std::endl;
 
     for(const std::string &addr : spec.addresses) {
         out << "addr=" << addr << std::endl;
@@ -642,6 +672,12 @@ static void createRangesFile(const std::string &file, const std::string &sizeOpt
 
     spec.start = _config.startKey;
     spec.end = _config.endKey;
+    spec.stride = _config.stride;
+    spec.threads = _config.threads;
+    spec.blocks = _config.blocks;
+    spec.points = _config.pointsPerThread;
+    spec.device = _config.device;
+    spec.compression = _config.compression;
     if(sizeOpt.length() > 0) {
         if(!parseRangeSize(sizeOpt, spec.size)) {
             Logger::log(LogLevel::Error, "Invalid range size '" + sizeOpt + "'");
@@ -789,6 +825,24 @@ static bool readRangeFile(const std::string &file, RangeSpec &spec,
         if(entries.find("next") != entries.end()) {
             spec.next = util::parseUInt64(entries["next"]);
         }
+        if(entries.find("stride") != entries.end()) {
+            spec.stride = secp256k1::uint256(entries["stride"]);
+        }
+        if(entries.find("threads") != entries.end()) {
+            spec.threads = util::parseUInt32(entries["threads"]);
+        }
+        if(entries.find("blocks") != entries.end()) {
+            spec.blocks = util::parseUInt32(entries["blocks"]);
+        }
+        if(entries.find("points") != entries.end()) {
+            spec.points = util::parseUInt32(entries["points"]);
+        }
+        if(entries.find("device") != entries.end()) {
+            spec.device = util::parseUInt32(entries["device"]);
+        }
+        if(entries.find("compression") != entries.end()) {
+            spec.compression = parseCompressionString(entries["compression"]);
+        }
     } catch(...) {
         return false;
     }
@@ -817,6 +871,22 @@ static int processRanges(const std::string &file)
 
     _config.targets = spec.addresses;
     _config.targetsFile.clear();
+    if(spec.threads != 0) {
+        _config.threads = spec.threads;
+    }
+    if(spec.blocks != 0) {
+        _config.blocks = spec.blocks;
+    }
+    if(spec.points != 0) {
+        _config.pointsPerThread = spec.points;
+    }
+    if(spec.device >= 0) {
+        _config.device = spec.device;
+    }
+    if(spec.stride.cmp(secp256k1::uint256(1)) != 0) {
+        _config.stride = spec.stride;
+    }
+    _config.compression = spec.compression;
 
     try {
         _totalRanges = computeTotalRanges(spec);
@@ -1063,13 +1133,13 @@ int main(int argc, char **argv)
 
     // If there are no operands, then we must be reading from a file, otherwise
     // expect addresses on the commandline
-	if(ops.size() == 0) {
-		if(_config.targetsFile.length() == 0) {
-			Logger::log(LogLevel::Error, "Missing arguments");
-			usage();
-			return 1;
-		}
-	} else {
+        if(ops.size() == 0) {
+                if(_config.targetsFile.length() == 0 && !optProcessRanges) {
+                        Logger::log(LogLevel::Error, "Missing arguments");
+                        usage();
+                        return 1;
+                }
+        } else {
 		for(unsigned int i = 0; i < ops.size(); i++) {
             if(!Address::verifyAddress(ops[i])) {
                 Logger::log(LogLevel::Error, "Invalid address '" + ops[i] + "'");
