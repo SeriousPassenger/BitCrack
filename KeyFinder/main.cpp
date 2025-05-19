@@ -158,8 +158,9 @@ void statusCallback(KeySearchStatus info)
             etaSec = (double)rem / (info.speed * 1000000.0);
         }
         std::string etaStr = util::formatSeconds((unsigned int)etaSec);
-        std::string rangeInfo = " | range " + util::format((int)(_currentRangeIdx + 1)) + "/" + util::format((int)_totalRanges);
-        rangeInfo += " remaining:" + util::format((int)_rangesRemaining) + " eta:" + etaStr;
+        std::string rangeInfo = " | range " + util::format((uint64_t)(_currentRangeIdx + 1)) + "/" +
+            util::format((uint64_t)_totalRanges);
+        rangeInfo += " remaining:" + util::format((uint64_t)_rangesRemaining) + " eta:" + etaStr;
         printf("%s", rangeInfo.c_str());
     }
 
@@ -575,7 +576,7 @@ static void createRangesFile(const std::string &file)
         return;
     }
 
-    Logger::log(LogLevel::Debug, "Total ranges " + util::format((int)total));
+    Logger::log(LogLevel::Debug, "Total ranges " + util::format(total));
     Logger::log(LogLevel::Info, "Range descriptor written to '" + file + "'");
 }
 
@@ -676,7 +677,7 @@ static int processRanges(const std::string &file)
     _rangesRemaining = _totalRanges - done.size();
     _rangeMode = true;
 
-    Logger::log(LogLevel::Debug, "Total ranges " + util::format((int)_totalRanges));
+    Logger::log(LogLevel::Debug, "Total ranges " + util::format((uint64_t)_totalRanges));
 
     std::random_device rd;
     std::mt19937_64 gen(rd());
@@ -697,8 +698,8 @@ static int processRanges(const std::string &file)
         _rangesRemaining = _totalRanges - done.size() - 1;
 
         Logger::log(LogLevel::Debug,
-            "Processing range " + util::format((int)(done.size() + 1)) + "/" +
-            util::format((int)_totalRanges) + " start=" + start.toString() +
+            "Processing range " + util::format((uint64_t)(done.size() + 1)) + "/" +
+            util::format((uint64_t)_totalRanges) + " start=" + start.toString() +
             " end=" + end.toString());
 
         _config.startKey = start;
