@@ -241,7 +241,7 @@ void KeyFinder::run()
         if(_targets.size() == 0) {
             Logger::log(LogLevel::Info, "No targets remaining");
             _running = false;
-	    exit();
+	    exit(0);
         }
 
 		// Stop if we searched the entire range
