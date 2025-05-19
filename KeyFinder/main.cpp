@@ -243,6 +243,7 @@ void usage()
     printf("--share M/N             Divide the keyspace into N equal shares, process the Mth share\n");
     printf("--continue FILE         Save/load progress from FILE\n");
     printf("--create-ranges FILE    Create ranges covering the keyspace\n");
+    printf("--range-size N          Range size when creating ranges\n");
     printf("--process-ranges FILE   Process ranges from FILE\n");
 }
 
@@ -488,6 +489,36 @@ bool parseShare(const std::string &s, uint32_t &idx, uint32_t &total)
     return true;
 }
 
+static bool parseRangeSize(const std::string &s, uint64_t &size)
+{
+    std::string arg = util::toLower(util::trim(s));
+
+    if(arg.rfind("2^", 0) == 0) {
+        std::string expStr = arg.substr(2);
+        uint32_t exp = 0;
+        try {
+            exp = util::parseUInt32(expStr);
+        } catch(...) {
+            return false;
+        }
+
+        if(exp >= 64) {
+            return false;
+        }
+
+        size = (uint64_t)1ULL << exp;
+        return true;
+    }
+
+    try {
+        size = util::parseUInt64(arg);
+    } catch(...) {
+        return false;
+    }
+
+    return true;
+}
+
 struct RangeSpec {
     secp256k1::uint256 start;
     secp256k1::uint256 end;
@@ -576,13 +607,20 @@ static void getRange(const RangeSpec &spec, uint64_t idx, secp256k1::uint256 &st
 // Compute how many ranges exist in the given specification
 static uint64_t computeTotalRanges(const RangeSpec &spec);
 
-static void createRangesFile(const std::string &file)
+static void createRangesFile(const std::string &file, const std::string &sizeOpt)
 {
     RangeSpec spec;
 
     spec.start = _config.startKey;
     spec.end = _config.endKey;
-    spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60 * 12ULL);
+    if(sizeOpt.length() > 0) {
+        if(!parseRangeSize(sizeOpt, spec.size)) {
+            Logger::log(LogLevel::Error, "Invalid range size '" + sizeOpt + "'");
+            return;
+        }
+    } else {
+        spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60 * 12ULL);
+    }
 
     if(!_config.targetsFile.empty()) {
         std::vector<std::string> lines;
@@ -793,8 +831,10 @@ int main(int argc, char **argv)
     bool optPoints = false;
     bool optCreateRanges = false;
     bool optProcessRanges = false;
+    bool optRangeSize = false;
     std::string rangesCreateFile = "";
     std::string rangesProcessFile = "";
+    std::string rangeSizeArg = "";
 
     uint32_t shareIdx = 0;
     uint32_t numShares = 0;
@@ -845,6 +885,7 @@ int main(int argc, char **argv)
     parser.add("", "--share", true);
     parser.add("", "--stride", true);
     parser.add("", "--create-ranges", true);
+    parser.add("", "--range-size", true);
     parser.add("", "--process-ranges", true);
 
     try {
@@ -929,6 +970,9 @@ int main(int argc, char **argv)
                 if(_config.stride.cmp(0) == 0) {
                     throw std::string("argument is out of range");
                 }
+            } else if(optArg.equals("", "--range-size")) {
+                rangeSizeArg = optArg.arg;
+                optRangeSize = true;
             } else if(optArg.equals("", "--create-ranges")) {
                 rangesCreateFile = optArg.arg;
                 optCreateRanges = true;
@@ -1007,12 +1051,17 @@ int main(int argc, char **argv)
 		_config.compression = PointCompressionType::UNCOMPRESSED;
 	}
 
+    if(optRangeSize && !optCreateRanges) {
+        Logger::log(LogLevel::Error, "--range-size requires --create-ranges");
+        return 1;
+    }
+
     if(_config.checkpointFile.length() > 0) {
         readCheckpointFile();
     }
 
     if(optCreateRanges) {
-        createRangesFile(rangesCreateFile);
+        createRangesFile(rangesCreateFile, rangeSizeArg);
         return 0;
     }
 
