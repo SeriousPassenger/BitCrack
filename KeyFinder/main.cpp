@@ -270,6 +270,7 @@ void usage()
     printf("--share M/N             Divide the keyspace into N equal shares, process the Mth share\n");
     printf("--continue FILE         Save/load progress from FILE\n");
     printf("--create-ranges FILE    Create ranges covering the keyspace\n");
+    printf("--range-size N          Range size when creating ranges\n");
     printf("--process-ranges FILE   Process ranges from FILE\n");
     printf("                        Shows progress with range bars\n");
 }
@@ -516,22 +517,67 @@ bool parseShare(const std::string &s, uint32_t &idx, uint32_t &total)
     return true;
 }
 
+static bool parseRangeSize(const std::string &s, uint64_t &size)
+{
+    std::string arg = util::toLower(util::trim(s));
+
+    if(arg.rfind("2^", 0) == 0) {
+        std::string expStr = arg.substr(2);
+        uint32_t exp = 0;
+        try {
+            exp = util::parseUInt32(expStr);
+        } catch(...) {
+            return false;
+        }
+
+        if(exp >= 64) {
+            return false;
+        }
+
+        size = (uint64_t)1ULL << exp;
+        return true;
+    }
+
+    try {
+        size = util::parseUInt64(arg);
+    } catch(...) {
+        return false;
+    }
+
+    return true;
+}
+
 struct RangeSpec {
     secp256k1::uint256 start;
     secp256k1::uint256 end;
     uint64_t size = 0;
     uint64_t next = 0;
+    std::vector<std::string> addresses;
 };
 
 static bool readRangeSpec(const std::string &file, RangeSpec &spec)
 {
-    ConfigFileReader reader(file);
-
-    if(!reader.exists()) {
+    std::ifstream in(file.c_str());
+    if(!in.is_open()) {
         return false;
     }
 
-    auto entries = reader.read();
+    std::map<std::string, std::string> entries;
+    std::string line;
+    while(std::getline(in, line)) {
+        line = util::trim(line);
+        if(line.length() == 0) continue;
+        if(line.find('=') == std::string::npos) continue;
+
+        size_t eq = line.find('=');
+        std::string key = util::toLower(util::trim(line.substr(0, eq)));
+        std::string val = util::trim(line.substr(eq + 1));
+        if(key == "addr") {
+            spec.addresses.push_back(val);
+        } else {
+            entries[key] = val;
+        }
+    }
 
     if(entries.find("start") == entries.end() ||
        entries.find("end") == entries.end() ||
@@ -541,10 +587,10 @@ static bool readRangeSpec(const std::string &file, RangeSpec &spec)
     }
 
     try {
-        spec.start = secp256k1::uint256(entries["start"].value);
-        spec.end = secp256k1::uint256(entries["end"].value);
-        spec.size = util::parseUInt64(entries["size"].value);
-        spec.next = util::parseUInt64(entries["next"].value);
+        spec.start = secp256k1::uint256(entries["start"]);
+        spec.end = secp256k1::uint256(entries["end"]);
+        spec.size = util::parseUInt64(entries["size"]);
+        spec.next = util::parseUInt64(entries["next"]);
     } catch(...) {
         return false;
     }
@@ -564,6 +610,10 @@ static bool writeRangeSpec(const std::string &file, const RangeSpec &spec)
     out << "end=" << spec.end.toString() << std::endl;
     out << "size=" << util::format(spec.size) << std::endl;
     out << "next=" << util::format(spec.next) << std::endl;
+
+    for(const std::string &addr : spec.addresses) {
+        out << "addr=" << addr << std::endl;
+    }
     out.close();
 
     return true;
@@ -585,13 +635,40 @@ static void getRange(const RangeSpec &spec, uint64_t idx, secp256k1::uint256 &st
 // Compute how many ranges exist in the given specification
 static uint64_t computeTotalRanges(const RangeSpec &spec);
 
-static void createRangesFile(const std::string &file)
+static void createRangesFile(const std::string &file, const std::string &sizeOpt)
 {
     RangeSpec spec;
 
     spec.start = _config.startKey;
     spec.end = _config.endKey;
-    spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60 * 12ULL);
+    if(sizeOpt.length() > 0) {
+        if(!parseRangeSize(sizeOpt, spec.size)) {
+            Logger::log(LogLevel::Error, "Invalid range size '" + sizeOpt + "'");
+            return;
+        }
+    } else {
+        spec.size = static_cast<uint64_t>(300ULL * 1000000ULL * 60ULL * 60 * 12ULL);
+    }
+
+    if(!_config.targetsFile.empty()) {
+        std::vector<std::string> lines;
+        if(!util::readLinesFromStream(_config.targetsFile, lines)) {
+            Logger::log(LogLevel::Error, "Unable to open '" + _config.targetsFile + "'");
+            return;
+        }
+        for(const std::string &l : lines) {
+            std::string addr = util::trim(l);
+            if(addr.length() > 0) {
+                if(!Address::verifyAddress(addr)) {
+                    Logger::log(LogLevel::Error, "Invalid address '" + addr + "'");
+                    return;
+                }
+                spec.addresses.push_back(addr);
+            }
+        }
+    } else {
+        spec.addresses = _config.targets;
+    }
 
     Logger::log(LogLevel::Debug, "Creating ranges start=" + spec.start.toString() +
             " end=" + spec.end.toString() + " size=" + util::format(spec.size));
@@ -659,7 +736,11 @@ static bool readRangeFile(const std::string &file, RangeSpec &spec,
             size_t eq = line.find('=');
             std::string key = util::toLower(util::trim(line.substr(0, eq)));
             std::string val = util::trim(line.substr(eq + 1));
-            entries[key] = val;
+            if(key == "addr") {
+                spec.addresses.push_back(val);
+            } else {
+                entries[key] = val;
+            }
         } else {
             specDone = true;
             try {
@@ -680,6 +761,9 @@ static bool readRangeFile(const std::string &file, RangeSpec &spec,
         spec.start = secp256k1::uint256(entries["start"]);
         spec.end = secp256k1::uint256(entries["end"]);
         spec.size = util::parseUInt64(entries["size"]);
+        if(entries.find("next") != entries.end()) {
+            spec.next = util::parseUInt64(entries["next"]);
+        }
     } catch(...) {
         return false;
     }
@@ -700,6 +784,14 @@ static int processRanges(const std::string &file)
         Logger::log(LogLevel::Error, "Unable to read '" + file + "'");
         return 1;
     }
+
+    if(spec.addresses.size() == 0) {
+        Logger::log(LogLevel::Error, "Range file does not contain any addresses");
+        return 1;
+    }
+
+    _config.targets = spec.addresses;
+    _config.targetsFile.clear();
 
     _totalRanges = computeTotalRanges(spec);
     _rangesRemaining = _totalRanges - done.size();
@@ -767,8 +859,10 @@ int main(int argc, char **argv)
     bool optPoints = false;
     bool optCreateRanges = false;
     bool optProcessRanges = false;
+    bool optRangeSize = false;
     std::string rangesCreateFile = "";
     std::string rangesProcessFile = "";
+    std::string rangeSizeArg = "";
 
     uint32_t shareIdx = 0;
     uint32_t numShares = 0;
@@ -819,6 +913,7 @@ int main(int argc, char **argv)
     parser.add("", "--share", true);
     parser.add("", "--stride", true);
     parser.add("", "--create-ranges", true);
+    parser.add("", "--range-size", true);
     parser.add("", "--process-ranges", true);
 
     try {
@@ -903,6 +998,9 @@ int main(int argc, char **argv)
                 if(_config.stride.cmp(0) == 0) {
                     throw std::string("argument is out of range");
                 }
+            } else if(optArg.equals("", "--range-size")) {
+                rangeSizeArg = optArg.arg;
+                optRangeSize = true;
             } else if(optArg.equals("", "--create-ranges")) {
                 rangesCreateFile = optArg.arg;
                 optCreateRanges = true;
@@ -981,12 +1079,17 @@ int main(int argc, char **argv)
 		_config.compression = PointCompressionType::UNCOMPRESSED;
 	}
 
+    if(optRangeSize && !optCreateRanges) {
+        Logger::log(LogLevel::Error, "--range-size requires --create-ranges");
+        return 1;
+    }
+
     if(_config.checkpointFile.length() > 0) {
         readCheckpointFile();
     }
 
     if(optCreateRanges) {
-        createRangesFile(rangesCreateFile);
+        createRangesFile(rangesCreateFile, rangeSizeArg);
         return 0;
     }
 
