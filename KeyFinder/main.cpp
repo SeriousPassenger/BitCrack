@@ -678,7 +678,7 @@ static void createRangesFile(const std::string &file, const std::string &sizeOpt
     try {
         total = computeTotalRanges(spec);
     } catch(const std::overflow_error &e) {
-        Logger::log(LogLevel::Error, "Range count exceeds supported limit");
+        Logger::log(LogLevel::Error, "Range count exceeds supported limit. (Hint: Use a bigger --range-size or a smaller --keyspace)");
         return;
     }
 
